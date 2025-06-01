@@ -54,3 +54,5 @@ docs/_build/
 
 # Claude Code files
 .claude
+
+CLAUDE.md
