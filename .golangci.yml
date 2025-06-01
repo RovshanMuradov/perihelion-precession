@@ -1,0 +1,39 @@
+run:
+  timeout: 5m
+  skip-dirs:
+    - wasm  # Skip WebAssembly code that uses syscall/js
+    - cmd/web/vendor
+  skip-files:
+    - ".*\\.pb\\.go$"
+    - ".*_test\\.go$"
+
+linters-settings:
+  govet:
+    check-shadowing: true
+  golint:
+    min-confidence: 0.8
+  gofmt:
+    simplify: true
+  goimports:
+    local-prefixes: github.com/rovshanmuradov/perihelion-precession
+
+linters:
+  enable:
+    - gofmt
+    - goimports
+    - govet
+    - errcheck
+    - ineffassign
+    - unused
+  disable:
+    - typecheck  # Disable for now due to wasm build constraints
+
+issues:
+  exclude-rules:
+    - path: wasm/.*
+      linters:
+        - typecheck
+        - unused
+    - text: "should not use underscores in Go names"
+      linters:
+        - golint

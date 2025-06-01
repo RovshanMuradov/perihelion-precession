@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -104,21 +105,21 @@ func SolveKeplerEquation(meanAnomaly, eccentricity float64) float64 {
 	if eccentricity > 0.8 {
 		E = math.Pi
 	}
-	
+
 	// Newton-Raphson iteration
 	for i := 0; i < 30; i++ {
 		f := E - eccentricity*math.Sin(E) - meanAnomaly
 		df := 1.0 - eccentricity*math.Cos(E)
-		
+
 		deltaE := f / df
 		E -= deltaE
-		
+
 		// Check for convergence
 		if math.Abs(deltaE) < 1e-15 {
 			break
 		}
 	}
-	
+
 	return E
 }
 
@@ -131,30 +132,30 @@ func KeplerToCartesian(elements OrbitalElements, centralMass float64) (Vector3D,
 	Omega := elements.LongitudeOfNode
 	omega := elements.ArgumentOfPeriapsis
 	M := elements.MeanAnomaly
-	
+
 	// Gravitational parameter
 	mu := GravitationalConstant * centralMass
-	
+
 	// Solve Kepler's equation for eccentric anomaly
 	E := SolveKeplerEquation(M, e)
-	
+
 	// True anomaly
 	nu := 2.0 * math.Atan2(math.Sqrt(1+e)*math.Sin(E/2), math.Sqrt(1-e)*math.Cos(E/2))
-	
+
 	// Distance
 	r := a * (1 - e*math.Cos(E))
-	
+
 	// Position and velocity in orbital plane
 	xOrb := r * math.Cos(nu)
 	yOrb := r * math.Sin(nu)
-	
+
 	// Specific angular momentum
 	h := math.Sqrt(mu * a * (1 - e*e))
-	
+
 	// Velocity in orbital plane
-	vxOrb := -mu/h * math.Sin(nu)
-	vyOrb := mu/h * (e + math.Cos(nu))
-	
+	vxOrb := -mu / h * math.Sin(nu)
+	vyOrb := mu / h * (e + math.Cos(nu))
+
 	// Rotation matrices for 3D transformation
 	cosOmega := math.Cos(Omega)
 	sinOmega := math.Sin(Omega)
@@ -162,16 +163,16 @@ func KeplerToCartesian(elements OrbitalElements, centralMass float64) (Vector3D,
 	sinomega := math.Sin(omega)
 	cosi := math.Cos(i)
 	sini := math.Sin(i)
-	
+
 	// Transform to 3D inertial frame
-	x := xOrb*(cosOmega*cosomega - sinOmega*sinomega*cosi) - yOrb*(cosOmega*sinomega + sinOmega*cosomega*cosi)
-	y := xOrb*(sinOmega*cosomega + cosOmega*sinomega*cosi) - yOrb*(sinOmega*sinomega - cosOmega*cosomega*cosi)
+	x := xOrb*(cosOmega*cosomega-sinOmega*sinomega*cosi) - yOrb*(cosOmega*sinomega+sinOmega*cosomega*cosi)
+	y := xOrb*(sinOmega*cosomega+cosOmega*sinomega*cosi) - yOrb*(sinOmega*sinomega-cosOmega*cosomega*cosi)
 	z := xOrb*sinomega*sini + yOrb*cosomega*sini
-	
-	vx := vxOrb*(cosOmega*cosomega - sinOmega*sinomega*cosi) - vyOrb*(cosOmega*sinomega + sinOmega*cosomega*cosi)
-	vy := vxOrb*(sinOmega*cosomega + cosOmega*sinomega*cosi) - vyOrb*(sinOmega*sinomega - cosOmega*cosomega*cosi)
+
+	vx := vxOrb*(cosOmega*cosomega-sinOmega*sinomega*cosi) - vyOrb*(cosOmega*sinomega+sinOmega*cosomega*cosi)
+	vy := vxOrb*(sinOmega*cosomega+cosOmega*sinomega*cosi) - vyOrb*(sinOmega*sinomega-cosOmega*cosomega*cosi)
 	vz := vxOrb*sinomega*sini + vyOrb*cosomega*sini
-	
+
 	return Vector3D{x, y, z}, Vector3D{vx, vy, vz}
 }
 
@@ -217,33 +218,33 @@ func CalculatePostNewtonianCorrection(planet Planet, centralMass float64) Vector
 	v := planet.Velocity
 	rMag := r.Magnitude()
 	vMag := v.Magnitude()
-	
+
 	if rMag == 0 {
 		return Vector3D{0, 0, 0}
 	}
-	
+
 	// Gravitational parameter μ = GM
 	mu := GravitationalConstant * centralMass
-	
+
 	// Unit position vector r̂
 	rHat := r.Unit()
-	
+
 	// Radial velocity vr = v·r̂
 	vr := v.Dot(rHat)
-	
+
 	// 1PN acceleration terms:
 	// a_GR = [(4μ/r - v²)μ/(c²r²)] * r̂ + [4μvr/(c²r²)] * v
-	
+
 	c2 := float64(SpeedOfLight * SpeedOfLight)
-	
+
 	// First term: radial correction
 	radialTerm := (4*mu/rMag - vMag*vMag) * mu / (c2 * rMag * rMag)
 	radialAccel := rHat.Scale(radialTerm)
-	
-	// Second term: tangential correction  
+
+	// Second term: tangential correction
 	tangentialTerm := 4 * mu * vr / (c2 * rMag * rMag)
 	tangentialAccel := v.Scale(tangentialTerm)
-	
+
 	return radialAccel.Add(tangentialAccel)
 }
 
@@ -293,7 +294,7 @@ func ComputeDerivative(planetIndex int, planets []Planet) StateDerivative {
 	planet := planets[planetIndex]
 	netForce := CalculateNetForce(planetIndex, planets)
 	acceleration := netForce.Scale(1.0 / planet.Mass) // F = ma, so a = F/m
-	
+
 	// Add post-Newtonian (1PN) relativistic corrections for planets orbiting the Sun
 	// Assume Sun is at index 0 and is stationary at origin
 	if planetIndex > 0 && len(planets) > 0 {
@@ -379,25 +380,25 @@ func IntegrateRK4(state SystemState, dt float64) SystemState {
 // This integrator conserves energy better for long-term orbital simulations.
 func IntegrateVelocityVerlet(state SystemState, dt float64) SystemState {
 	n := len(state.Planets)
-	
+
 	// Create new state
 	newState := SystemState{
 		Time:    state.Time + dt,
 		Planets: make([]Planet, n),
 	}
-	
+
 	// Calculate current accelerations
 	currentAccelerations := make([]Vector3D, n)
 	for i := range state.Planets {
 		netForce := CalculateNetForce(i, state.Planets)
 		currentAccelerations[i] = netForce.Scale(1.0 / state.Planets[i].Mass)
 	}
-	
+
 	// Velocity Verlet algorithm:
 	// 1. Update positions: r(t+dt) = r(t) + v(t)*dt + 0.5*a(t)*dt²
 	// 2. Calculate new accelerations at r(t+dt)
 	// 3. Update velocities: v(t+dt) = v(t) + 0.5*(a(t) + a(t+dt))*dt
-	
+
 	// Step 1: Update positions
 	for i := range state.Planets {
 		newState.Planets[i] = state.Planets[i]
@@ -405,21 +406,200 @@ func IntegrateVelocityVerlet(state SystemState, dt float64) SystemState {
 			Add(state.Planets[i].Velocity.Scale(dt)).
 			Add(currentAccelerations[i].Scale(0.5 * dt * dt))
 	}
-	
+
 	// Step 2: Calculate new accelerations at updated positions
 	newAccelerations := make([]Vector3D, n)
 	for i := range newState.Planets {
 		netForce := CalculateNetForce(i, newState.Planets)
 		newAccelerations[i] = netForce.Scale(1.0 / newState.Planets[i].Mass)
 	}
-	
+
 	// Step 3: Update velocities using average of old and new accelerations
 	for i := range state.Planets {
 		averageAcceleration := currentAccelerations[i].Add(newAccelerations[i]).Scale(0.5)
 		newState.Planets[i].Velocity = state.Planets[i].Velocity.Add(averageAcceleration.Scale(dt))
 	}
-	
+
 	return newState
+}
+
+// Statistical Analysis Structures
+
+// PrecessionStatistics holds statistical analysis of precession data
+type PrecessionStatistics struct {
+	MeanRate     float64   // Mean precession rate (arcsec/century)
+	StdDev       float64   // Standard deviation
+	Trend        float64   // Linear trend coefficient
+	Confidence   float64   // 95% confidence interval
+	Outliers     []float64 // Detected outliers
+	CleanSamples int       // Number of clean samples after outlier removal
+	DataQuality  string    // Assessment of data quality
+}
+
+// AdaptiveIntegrator provides adaptive time stepping for improved accuracy
+type AdaptiveIntegrator struct {
+	MinStep     float64 // Minimum time step (seconds)
+	MaxStep     float64 // Maximum time step (seconds)
+	Tolerance   float64 // Relative error tolerance
+	CurrentStep float64 // Current time step
+	StepCount   int     // Number of steps taken
+	Adaptations int     // Number of step size adaptations
+}
+
+// NewAdaptiveIntegrator creates a new adaptive integrator
+func NewAdaptiveIntegrator(minStep, maxStep, tolerance float64) *AdaptiveIntegrator {
+	return &AdaptiveIntegrator{
+		MinStep:     minStep,
+		MaxStep:     maxStep,
+		Tolerance:   tolerance,
+		CurrentStep: (minStep + maxStep) / 2, // Start with middle value
+		StepCount:   0,
+		Adaptations: 0,
+	}
+}
+
+// Step performs one adaptive integration step with error control
+func (ai *AdaptiveIntegrator) Step(state SystemState) (SystemState, float64) {
+	// Perform one full step
+	fullStep := IntegrateRK4(state, ai.CurrentStep)
+
+	// Perform two half steps for error estimation
+	halfStep1 := IntegrateRK4(state, ai.CurrentStep/2)
+	halfStep2 := IntegrateRK4(halfStep1, ai.CurrentStep/2)
+
+	// Estimate error using Richardson extrapolation
+	error := ai.estimateError(fullStep, halfStep2)
+
+	// Adapt step size based on error
+	if error > ai.Tolerance && ai.CurrentStep > ai.MinStep {
+		// Error too large - reduce step size
+		ai.CurrentStep = math.Max(ai.CurrentStep*0.5, ai.MinStep)
+		ai.Adaptations++
+		// Retry with smaller step
+		return ai.Step(state)
+	} else if error < ai.Tolerance*0.1 && ai.CurrentStep < ai.MaxStep {
+		// Error very small - increase step size
+		ai.CurrentStep = math.Min(ai.CurrentStep*1.5, ai.MaxStep)
+		ai.Adaptations++
+	}
+
+	ai.StepCount++
+	// Return the more accurate result (two half steps)
+	return halfStep2, ai.CurrentStep
+}
+
+// estimateError calculates relative error between full step and two half steps
+func (ai *AdaptiveIntegrator) estimateError(state1, state2 SystemState) float64 {
+	maxError := 0.0
+
+	for i := range state1.Planets {
+		// Position error
+		posError := state1.Planets[i].Position.Subtract(state2.Planets[i].Position).Magnitude()
+		relPosError := posError / math.Max(state1.Planets[i].Position.Magnitude(), 1e3)
+
+		// Velocity error
+		velError := state1.Planets[i].Velocity.Subtract(state2.Planets[i].Velocity).Magnitude()
+		relVelError := velError / math.Max(state1.Planets[i].Velocity.Magnitude(), 1e3)
+
+		// Take maximum error
+		errorValue := math.Max(relPosError, relVelError)
+		if errorValue > maxError {
+			maxError = errorValue
+		}
+	}
+
+	return maxError
+}
+
+// OptimizeSimulationParameters automatically selects optimal simulation parameters
+func OptimizeSimulationParameters(durationYears float64) (timeStep float64, outputInterval int, warnings []string) {
+	var warn []string
+
+	// Calculate expected Mercury orbits
+	mercuryOrbitsExpected := durationYears / (MercuryOrbitalPeriod / 365.25)
+
+	// Issue warnings for insufficient data
+	if mercuryOrbitsExpected < 50 {
+		warn = append(warn, fmt.Sprintf("Only %.0f Mercury orbits expected. Recommend 50+ for stable results", mercuryOrbitsExpected))
+	}
+	if mercuryOrbitsExpected < 10 {
+		warn = append(warn, "Very short simulation - results will be extremely noisy")
+	}
+
+	// Adaptive time step based on duration
+	if durationYears < 1 {
+		timeStep = 1800.0 // 30 minutes for very short sims
+		outputInterval = 50
+	} else if durationYears < 10 {
+		timeStep = 3600.0 // 1 hour
+		outputInterval = 100
+	} else if durationYears < 50 {
+		timeStep = 3600.0 * 3 // 3 hours
+		outputInterval = 200
+	} else if durationYears < 100 {
+		timeStep = 3600.0 * 6 // 6 hours
+		outputInterval = 500
+	} else {
+		timeStep = 3600.0 * 12 // 12 hours for very long sims
+		outputInterval = 1000
+		warn = append(warn, "Very long simulation - consider using adaptive time stepping")
+	}
+
+	return timeStep, outputInterval, warn
+}
+
+// Utility functions for statistical calculations
+func calculateMean(values []float64) float64 {
+	if len(values) == 0 {
+		return 0
+	}
+	sum := 0.0
+	for _, v := range values {
+		sum += v
+	}
+	return sum / float64(len(values))
+}
+
+func calculateStdDev(values []float64, mean float64) float64 {
+	if len(values) <= 1 {
+		return 0
+	}
+	sum := 0.0
+	for _, v := range values {
+		diff := v - mean
+		sum += diff * diff
+	}
+	return math.Sqrt(sum / float64(len(values)-1))
+}
+
+func calculateLinearTrend(values []float64) float64 {
+	if len(values) < 2 {
+		return 0
+	}
+
+	n := float64(len(values))
+	sumX := 0.0
+	sumY := 0.0
+	sumXY := 0.0
+	sumX2 := 0.0
+
+	for i, y := range values {
+		x := float64(i)
+		sumX += x
+		sumY += y
+		sumXY += x * y
+		sumX2 += x * x
+	}
+
+	// Linear regression slope
+	numerator := n*sumXY - sumX*sumY
+	denominator := n*sumX2 - sumX*sumX
+
+	if math.Abs(denominator) < 1e-10 {
+		return 0
+	}
+
+	return numerator / denominator
 }
 
 // Precession Analysis Functions
@@ -431,36 +611,36 @@ func ConvertStateToOrbitalElements(planet Planet, centralMass float64) OrbitalEl
 	v := planet.Velocity
 	rMag := r.Magnitude()
 	vMag := v.Magnitude()
-	
+
 	// Gravitational parameter
 	mu := GravitationalConstant * centralMass
-	
+
 	// Specific orbital energy
 	specificEnergy := 0.5*vMag*vMag - mu/rMag
-	
+
 	// Semi-major axis from energy: E = -μ/(2a)
 	semiMajorAxis := -mu / (2 * specificEnergy)
-	
+
 	// Angular momentum vector h = r × v
 	hVec := r.Cross(v)
 	h := hVec.Magnitude()
-	
+
 	// Eccentricity vector (Laplace-Runge-Lenz vector)
 	// e_vec = (v × h)/μ - r/|r|
 	vCrossH := v.Cross(hVec)
 	rUnit := r.Unit()
-	eVec := vCrossH.Scale(1.0/mu).Subtract(rUnit)
+	eVec := vCrossH.Scale(1.0 / mu).Subtract(rUnit)
 	eccentricity := eVec.Magnitude()
-	
+
 	// Node vector (for inclination calculations)
 	// n = k × h (where k is the z-axis unit vector)
 	kVec := Vector3D{0, 0, 1}
 	nVec := kVec.Cross(hVec)
 	nMag := nVec.Magnitude()
-	
+
 	// Inclination: i = arccos(h_z / |h|)
 	inclination := math.Acos(hVec.Z / h)
-	
+
 	// Longitude of ascending node: Ω = arctan2(n_y, n_x)
 	var longitudeOfNode float64
 	if nMag > 1e-10 {
@@ -468,7 +648,7 @@ func ConvertStateToOrbitalElements(planet Planet, centralMass float64) OrbitalEl
 	} else {
 		longitudeOfNode = 0.0 // Undefined for non-inclined orbits
 	}
-	
+
 	// Argument of periapsis: ω = arccos(n·e / (|n||e|))
 	var argumentOfPeriapsis float64
 	if eccentricity > 1e-10 && nMag > 1e-10 {
@@ -480,7 +660,7 @@ func ConvertStateToOrbitalElements(planet Planet, centralMass float64) OrbitalEl
 			cosω = -1.0
 		}
 		argumentOfPeriapsis = math.Acos(cosω)
-		
+
 		// Check quadrant
 		if eVec.Z < 0 {
 			argumentOfPeriapsis = 2*math.Pi - argumentOfPeriapsis
@@ -491,7 +671,7 @@ func ConvertStateToOrbitalElements(planet Planet, centralMass float64) OrbitalEl
 	} else {
 		argumentOfPeriapsis = 0.0 // Undefined for circular orbits
 	}
-	
+
 	// True anomaly: ν = arccos(e·r / (|e||r|))
 	var trueAnomaly float64
 	if eccentricity > 1e-10 {
@@ -503,7 +683,7 @@ func ConvertStateToOrbitalElements(planet Planet, centralMass float64) OrbitalEl
 			cosν = -1.0
 		}
 		trueAnomaly = math.Acos(cosν)
-		
+
 		// Check quadrant using velocity direction
 		if r.Dot(v) < 0 {
 			trueAnomaly = 2*math.Pi - trueAnomaly
@@ -512,11 +692,11 @@ func ConvertStateToOrbitalElements(planet Planet, centralMass float64) OrbitalEl
 		// For circular orbits, use position angle
 		trueAnomaly = math.Atan2(r.Y, r.X)
 	}
-	
+
 	// Convert true anomaly to mean anomaly (simplified for demonstration)
 	// For more accuracy, would need to convert through eccentric anomaly
 	meanAnomaly := trueAnomaly // Approximation for low eccentricity
-	
+
 	// Ensure angles are in [0, 2π] range
 	if longitudeOfNode < 0 {
 		longitudeOfNode += 2 * math.Pi
@@ -527,7 +707,7 @@ func ConvertStateToOrbitalElements(planet Planet, centralMass float64) OrbitalEl
 	if meanAnomaly < 0 {
 		meanAnomaly += 2 * math.Pi
 	}
-	
+
 	return OrbitalElements{
 		SemiMajorAxis:       semiMajorAxis,
 		Eccentricity:        eccentricity,
@@ -591,9 +771,9 @@ func (pt *PrecessionTracker) Update(time float64, position Vector3D, velocity Ve
 	if rMag == 0 {
 		return // Avoid division by zero
 	}
-	
+
 	currentRadialVel := position.Dot(velocity) / rMag
-	
+
 	// Detect periapsis passage using radial velocity sign change
 	// Periapsis occurs when radial velocity changes from negative (approaching) to positive (receding)
 	if pt.LastTime > 0 && pt.LastRadialVel < 0 && currentRadialVel > 0 {
@@ -601,17 +781,17 @@ func (pt *PrecessionTracker) Update(time float64, position Vector3D, velocity Ve
 		periapsisTime, periapsisPos, periapsisVel := pt.interpolatePeriapsis(
 			pt.LastTime, time, pt.LastPosition, position, pt.LastVelocity, velocity,
 			pt.LastRadialVel, currentRadialVel)
-		
+
 		// Record periapsis event
 		pt.detectPeriapsis(periapsisTime, periapsisPos, periapsisVel)
 	}
-	
+
 	// Update tracking variables
 	pt.LastPosition = position
 	pt.LastVelocity = velocity
 	pt.LastTime = time
 	pt.LastRadialVel = currentRadialVel
-	
+
 	// Update visualization data (for continuity with existing plots)
 	elements := ConvertStateToOrbitalElements(Planet{Position: position, Velocity: velocity}, SolarMass)
 	longitude := CalculatePerihelionLongitude(elements)
@@ -625,27 +805,27 @@ func (pt *PrecessionTracker) interpolatePeriapsis(t1, t2 float64, r1, r2, v1, v2
 	// Linear interpolation to find when radial velocity = 0
 	// rv(t) = rv1 + (rv2 - rv1) * (t - t1) / (t2 - t1) = 0
 	// Solving: t = t1 - rv1 * (t2 - t1) / (rv2 - rv1)
-	
+
 	var alpha float64
-	if math.Abs(rv2 - rv1) < 1e-15 {
+	if math.Abs(rv2-rv1) < 1e-15 {
 		// Avoid division by zero, use midpoint
 		alpha = 0.5
 	} else {
 		alpha = -rv1 / (rv2 - rv1)
 	}
-	
+
 	// Clamp alpha to [0, 1] to stay within the interval
 	if alpha < 0 {
 		alpha = 0
 	} else if alpha > 1 {
 		alpha = 1
 	}
-	
+
 	// Interpolate time, position, and velocity
 	periapsisTime := t1 + alpha*(t2-t1)
 	periapsisPos := r1.Add(r2.Subtract(r1).Scale(alpha))
 	periapsisVel := v1.Add(v2.Subtract(v1).Scale(alpha))
-	
+
 	return periapsisTime, periapsisPos, periapsisVel
 }
 
@@ -653,11 +833,11 @@ func (pt *PrecessionTracker) interpolatePeriapsis(t1, t2 float64, r1, r2, v1, v2
 func (pt *PrecessionTracker) detectPeriapsis(time float64, position Vector3D, velocity Vector3D) {
 	// Calculate distance at periapsis
 	distance := position.Magnitude()
-	
+
 	// Use orbital elements to get proper argument of periapsis
 	elements := ConvertStateToOrbitalElements(Planet{Position: position, Velocity: velocity}, SolarMass)
 	argumentPeriapsis := elements.ArgumentOfPeriapsis
-	
+
 	// Create periapsis event
 	event := PeriapsisEvent{
 		Time:              time,
@@ -665,16 +845,16 @@ func (pt *PrecessionTracker) detectPeriapsis(time float64, position Vector3D, ve
 		ArgumentPeriapsis: argumentPeriapsis,
 		OrbitNumber:       pt.CurrentOrbit,
 	}
-	
+
 	// Add to history
 	pt.PeriapsisEvents = append(pt.PeriapsisEvents, event)
-	
+
 	// Debug output for first few periapsis events (optional)
 	if len(pt.PeriapsisEvents) <= 10 {
 		fmt.Printf("Detected periapsis %d at day %.1f, ω=%.6f rad (%.3f°), cumOmega=%.6f rad\n",
 			pt.CurrentOrbit, time/(24*3600), argumentPeriapsis, argumentPeriapsis*180/math.Pi, pt.cumOmega)
 	}
-	
+
 	// Update precession using cumulative tracking approach
 	pt.addPeriapsis(argumentPeriapsis)
 }
@@ -686,7 +866,7 @@ func (pt *PrecessionTracker) addPeriapsis(eventOmega float64) {
 	} else {
 		dOmega := eventOmega - pt.lastOmega
 		originalDOmega := dOmega // Store original for debug
-		
+
 		// Unwrap angle change at transition, not over entire interval
 		if dOmega > math.Pi {
 			dOmega -= 2 * math.Pi
@@ -697,17 +877,148 @@ func (pt *PrecessionTracker) addPeriapsis(eventOmega float64) {
 
 		// Debug output for first few transitions
 		if pt.CurrentOrbit <= 10 {
-			fmt.Printf("  Orbit %d: dOmega=%.6f rad (original=%.6f), cumOmega before=%.6f\n", 
+			fmt.Printf("  Orbit %d: dOmega=%.6f rad (original=%.6f), cumOmega before=%.6f\n",
 				pt.CurrentOrbit, dOmega, originalDOmega, pt.cumOmega)
 		}
 
-		pt.cumOmega += dOmega                // Sum the increment
-		pt.TotalPrecession = pt.cumOmega     // Store in radians
+		pt.cumOmega += dOmega            // Sum the increment
+		pt.TotalPrecession = pt.cumOmega // Store in radians
 		pt.lastOmega = eventOmega
 	}
 	pt.CurrentOrbit++
 }
 
+// AnalyzePrecessionStatistics performs comprehensive statistical analysis of precession data
+func (pt *PrecessionTracker) AnalyzePrecessionStatistics() PrecessionStatistics {
+	if len(pt.PeriapsisEvents) < 10 {
+		return PrecessionStatistics{
+			DataQuality: "Insufficient data - need at least 10 periapsis events",
+		}
+	}
+
+	// Calculate precession rates between consecutive periapsis events
+	var rates []float64
+	for i := 1; i < len(pt.PeriapsisEvents); i++ {
+		prev := pt.PeriapsisEvents[i-1]
+		curr := pt.PeriapsisEvents[i]
+
+		// Change in argument of periapsis
+		dOmega := curr.ArgumentPeriapsis - prev.ArgumentPeriapsis
+		if dOmega > math.Pi {
+			dOmega -= 2 * math.Pi
+		}
+		if dOmega < -math.Pi {
+			dOmega += 2 * math.Pi
+		}
+
+		// Time interval
+		dt := curr.Time - prev.Time
+		dtYears := dt / (365.25 * 24 * 3600)
+
+		// Avoid division by very small time intervals
+		if dtYears > 0.001 { // At least ~9 hours
+			rate := (dOmega * RadiansToArcseconds) / dtYears // arcsec/year
+			rates = append(rates, rate)
+		}
+	}
+
+	if len(rates) < 5 {
+		return PrecessionStatistics{
+			DataQuality: "Insufficient rate samples for analysis",
+		}
+	}
+
+	// Calculate basic statistics
+	mean := calculateMean(rates)
+	stdDev := calculateStdDev(rates, mean)
+
+	// Remove outliers using 3-sigma rule
+	var cleanRates []float64
+	var outliers []float64
+	for _, rate := range rates {
+		if math.Abs(rate-mean) < 3*stdDev {
+			cleanRates = append(cleanRates, rate)
+		} else {
+			outliers = append(outliers, rate)
+		}
+	}
+
+	// Recalculate statistics with clean data
+	cleanMean := calculateMean(cleanRates)
+	cleanStdDev := calculateStdDev(cleanRates, cleanMean)
+
+	// Linear trend analysis
+	trend := calculateLinearTrend(cleanRates)
+
+	// 95% confidence interval
+	confidence := 0.0
+	if len(cleanRates) > 1 {
+		// t-distribution critical value for 95% confidence (approximation for large n)
+		tCritical := 1.96
+		if len(cleanRates) < 30 {
+			// More conservative for small samples
+			tCritical = 2.0
+		}
+		confidence = tCritical * cleanStdDev / math.Sqrt(float64(len(cleanRates)))
+	}
+
+	// Assess data quality
+	var quality string
+	outlierPercent := float64(len(outliers)) / float64(len(rates)) * 100
+	relativeError := confidence / math.Abs(cleanMean) * 100
+
+	if len(cleanRates) >= 50 && outlierPercent < 10 && relativeError < 5 {
+		quality = "Excellent - high precision, low noise"
+	} else if len(cleanRates) >= 20 && outlierPercent < 20 && relativeError < 15 {
+		quality = "Good - adequate precision for analysis"
+	} else if len(cleanRates) >= 10 && outlierPercent < 30 && relativeError < 25 {
+		quality = "Fair - usable but noisy data"
+	} else {
+		quality = "Poor - results may be unreliable"
+	}
+
+	return PrecessionStatistics{
+		MeanRate:     cleanMean * 100,   // Convert to arcsec/century
+		StdDev:       cleanStdDev * 100, // Convert to arcsec/century
+		Trend:        trend * 100,       // Convert to arcsec/century per sample
+		Confidence:   confidence * 100,  // Convert to arcsec/century
+		Outliers:     outliers,
+		CleanSamples: len(cleanRates),
+		DataQuality:  quality,
+	}
+}
+
+// PrintStatisticalAnalysis displays comprehensive statistical results
+func (stats PrecessionStatistics) PrintStatisticalAnalysis() {
+	fmt.Println("\n=== Statistical Analysis of Precession ===")
+
+	if stats.CleanSamples == 0 {
+		fmt.Printf("❌ %s\n", stats.DataQuality)
+		return
+	}
+
+	fmt.Printf("📊 Data Quality: %s\n", stats.DataQuality)
+	fmt.Printf("📈 Clean samples: %d\n", stats.CleanSamples)
+	fmt.Printf("⚠️  Outliers detected: %d\n", len(stats.Outliers))
+	fmt.Println()
+
+	fmt.Printf("📐 Mean precession rate: %.2f ± %.2f arcsec/century\n", stats.MeanRate, stats.Confidence)
+	fmt.Printf("📊 Standard deviation: %.2f arcsec/century\n", stats.StdDev)
+	fmt.Printf("📈 Linear trend: %.4f arcsec/century per orbit\n", stats.Trend)
+	fmt.Printf("🎯 95%% confidence interval: [%.2f, %.2f] arcsec/century\n",
+		stats.MeanRate-stats.Confidence, stats.MeanRate+stats.Confidence)
+
+	if len(stats.Outliers) > 0 && len(stats.Outliers) <= 10 {
+		fmt.Printf("⚠️  Outliers: ")
+		for i, outlier := range stats.Outliers {
+			if i > 0 {
+				fmt.Printf(", ")
+			}
+			fmt.Printf("%.1f", outlier*100)
+		}
+		fmt.Printf(" arcsec/century\n")
+	}
+}
 
 // GetPrecessionRate calculates the precession rate in arcseconds per year.
 func (pt *PrecessionTracker) GetPrecessionRate(timeSpanSeconds float64) float64 {
@@ -719,10 +1030,10 @@ func (pt *PrecessionTracker) GetPrecessionRate(timeSpanSeconds float64) float64 
 	// Convert to arcseconds per year
 	secondsPerYear := 365.25 * 24 * 3600
 	durationYears := timeSpanSeconds / secondsPerYear
-	
+
 	// Total precession in arcseconds over the simulation duration
 	totalPrecessionArcsec := pt.TotalPrecession * RadiansToArcseconds
-	
+
 	// Return as arcseconds per year
 	return totalPrecessionArcsec / durationYears
 }
@@ -906,8 +1217,8 @@ func CreateSolarSystem() SystemState {
 }
 
 // RunNBodySimulation executes the N-body simulation with precession tracking
-func RunNBodySimulation(durationYears float64, outputInterval int) {
-	fmt.Println("\n=== N-body Simulation Starting ===")
+func RunNBodySimulation(durationYears float64, useAdaptive bool) {
+	fmt.Println("\n=== Enhanced N-body Simulation Starting ===")
 
 	// Initialize system
 	state := CreateSolarSystem()
@@ -919,25 +1230,63 @@ func RunNBodySimulation(durationYears float64, outputInterval int) {
 	initialLongitude := CalculatePerihelionLongitude(initialElements)
 	analyzer := NewPrecessionAnalyzer(mercuryIndex, SolarMass, initialLongitude)
 
+	// Optimize simulation parameters
+	timeStep, outputInterval, warnings := OptimizeSimulationParameters(durationYears)
+
+	// Display warnings
+	for _, warning := range warnings {
+		fmt.Printf("⚠️  %s\n", warning)
+	}
+	if len(warnings) > 0 {
+		fmt.Println()
+	}
+
 	// Simulation parameters
 	durationSeconds := durationYears * 365.25 * 24 * 3600
-	timeStep := 3600.0 * 1 // 1 hour in seconds (improved precision)
 	totalSteps := int(durationSeconds / timeStep)
+	if useAdaptive {
+		totalSteps = -1 // Will be determined dynamically
+	}
 
-	fmt.Printf("Duration: %.1f years (%.0f seconds)\n", durationYears, durationSeconds)
-	fmt.Printf("Time step: %.1f hours\n", timeStep/3600)
-	fmt.Printf("Total steps: %d\n", totalSteps)
-	fmt.Printf("Output every %d steps\n", outputInterval)
+	fmt.Printf("🚀 Duration: %.1f years (%.0f seconds)\n", durationYears, durationSeconds)
+	if useAdaptive {
+		fmt.Printf("⏱️  Adaptive time stepping: ON (tolerance: 1e-12)\n")
+	} else {
+		fmt.Printf("⏱️  Fixed time step: %.1f hours\n", timeStep/3600)
+		fmt.Printf("🔢 Total steps: %d\n", totalSteps)
+	}
+	fmt.Printf("📊 Output interval: every %d steps\n", outputInterval)
 
 	// Storage for visualization data
 	var orbitPoints []Vector3D
 	var precessionHistory []float64
 	var timeHistory []float64
 
+	// Initialize integrator
+	var integrator *AdaptiveIntegrator
+	if useAdaptive {
+		minStep := timeStep / 10 // Minimum: 1/10 of suggested step
+		maxStep := timeStep * 5  // Maximum: 5x suggested step
+		tolerance := 1e-12       // Relative error tolerance
+		integrator = NewAdaptiveIntegrator(minStep, maxStep, tolerance)
+		fmt.Printf("⚙️  Adaptive range: %.1f - %.1f hours\n", minStep/3600, maxStep/3600)
+	}
+	fmt.Println()
+
 	// Run simulation
-	for step := 0; step < totalSteps; step++ {
-		// Integrate one step using symplectic integrator for better long-term stability
-		state = IntegrateVelocityVerlet(state, timeStep)
+	step := 0
+	startTime := time.Now()
+	lastProgressTime := startTime
+
+	for state.Time < durationSeconds {
+		// Integration step
+		var actualStep float64
+		if useAdaptive {
+			state, actualStep = integrator.Step(state)
+		} else {
+			state = IntegrateVelocityVerlet(state, timeStep)
+			actualStep = timeStep
+		}
 
 		// Track precession
 		analyzer.AnalyzeSystem(state)
@@ -951,52 +1300,129 @@ func RunNBodySimulation(durationYears float64, outputInterval int) {
 			longitude := CalculatePerihelionLongitude(elements)
 			precessionHistory = append(precessionHistory, longitude*RadiansToArcseconds)
 			timeHistory = append(timeHistory, state.Time/(365.25*24*3600)) // years
-
-			// Progress update with diagnostics
-			if step%(totalSteps/10) == 0 {
-				progress := float64(step) / float64(totalSteps) * 100
-				currentYear := state.Time / (365.25 * 24 * 3600)
-				fmt.Printf("Progress: %.1f%% (%.2f years) - Longitude: %.3f° Orbits: %d Precession: %.6f\"\n",
-					progress, currentYear, longitude*180/math.Pi, analyzer.Tracker.GetOrbitalCount(), analyzer.Tracker.TotalPrecession*RadiansToArcseconds)
-			}
 		}
+
+		// Enhanced progress reporting
+		if time.Since(lastProgressTime) > 2*time.Second {
+			progress := state.Time / durationSeconds * 100
+			currentYear := state.Time / (365.25 * 24 * 3600)
+			orbitCount := analyzer.Tracker.GetOrbitalCount()
+			periapsisCount := len(analyzer.Tracker.PeriapsisEvents)
+
+			fmt.Printf("⏳ Progress: %.1f%% | Year: %.2f | Orbits: %d | Periapsis: %d",
+				progress, currentYear, orbitCount, periapsisCount)
+
+			if useAdaptive {
+				fmt.Printf(" | Step: %.1fh | Adaptations: %d",
+					actualStep/3600, integrator.Adaptations)
+			}
+
+			if orbitCount > 2 {
+				currentRate := analyzer.Tracker.GetPrecessionRate(state.Time)
+				fmt.Printf(" | Rate: %.1f\"/cent", currentRate*100)
+			}
+			fmt.Println()
+
+			lastProgressTime = time.Now()
+		}
+
+		step++
 	}
 
-	// Analysis results
-	fmt.Println("\n=== N-body Simulation Results ===")
+	// Simulation timing
+	elapsedTime := time.Since(startTime)
+	fmt.Printf("\n✅ Simulation completed in %v\n", elapsedTime.Round(time.Second))
+	if useAdaptive {
+		fmt.Printf("⚙️  Total integration steps: %d\n", integrator.StepCount)
+		fmt.Printf("⚙️  Step adaptations: %d\n", integrator.Adaptations)
+		fmt.Printf("⚙️  Final step size: %.1f hours\n", integrator.CurrentStep/3600)
+	}
+
+	// Enhanced results analysis
+	fmt.Println("\n=== Enhanced N-body Results Analysis ===")
 	finalPrecessionRate := analyzer.Tracker.GetPrecessionRate(durationSeconds)
 	precessionPerCentury := finalPrecessionRate * 100.0
 
-	fmt.Printf("Total simulation time: %.1f years\n", durationYears)
-	fmt.Printf("Mercury orbits completed: %d\n", analyzer.Tracker.GetOrbitalCount())
-	fmt.Printf("Periapsis events detected: %d\n", len(analyzer.Tracker.PeriapsisEvents))
+	fmt.Printf("🚀 Simulation time: %.1f years (%.0f seconds)\n", durationYears, durationSeconds)
+	fmt.Printf("🔄 Mercury orbits completed: %d\n", analyzer.Tracker.GetOrbitalCount())
+	fmt.Printf("🎯 Periapsis events detected: %d\n", len(analyzer.Tracker.PeriapsisEvents))
+
+	// Statistical analysis
+	stats := analyzer.Tracker.AnalyzePrecessionStatistics()
+	stats.PrintStatisticalAnalysis()
 
 	// Calculate theoretical values
 	grResult := CalculateGRPrecession(SolarMass, MercurySemiMajorAxis, MercuryEccentricity, MercuryOrbitalPeriod)
 	planetary := CalculatePlanetaryPerturbations()
 
-	fmt.Println("\n=== Precession Analysis ===")
-	fmt.Printf("N-body simulation detected: %.2f arcsec/century\n", precessionPerCentury)
-	fmt.Printf("  (Note: Short simulations are noisy; longer runs give better results)\n")
+	fmt.Println("\n=== Comparison with Theory ===")
+	if stats.CleanSamples > 0 {
+		fmt.Printf("📊 Statistical result: %.2f ± %.2f arcsec/century\n", stats.MeanRate, stats.Confidence)
+	} else {
+		fmt.Printf("📊 Simple average: %.2f arcsec/century\n", precessionPerCentury)
+		fmt.Printf("  ⚠️  Note: Insufficient data for statistical analysis\n")
+	}
 	fmt.Println()
-	fmt.Printf("Theoretical contributions:\n")
-	fmt.Printf("  Classical perturbations (planets): %.1f arcsec/century\n", planetary.Total())
-	fmt.Printf("  General Relativity effect: %.1f arcsec/century\n", grResult.PerCentury)
-	fmt.Printf("  Total theoretical: %.1f arcsec/century\n", planetary.Total()+grResult.PerCentury)
-	fmt.Printf("  Observed (historical): %.1f arcsec/century\n", ObservedPrecession)
+	fmt.Printf("📚 Theoretical contributions:\n")
+	fmt.Printf("  Classical perturbations: %.1f arcsec/century\n", planetary.Total())
+	fmt.Printf("  General Relativity: %.1f arcsec/century\n", grResult.PerCentury)
+	fmt.Printf("  Total theory: %.1f arcsec/century\n", planetary.Total()+grResult.PerCentury)
+	fmt.Printf("  Historical observation: %.1f arcsec/century\n", ObservedPrecession)
 	fmt.Println()
-	fmt.Printf("Agreement with theory: %.1f arcsec difference\n",
-		math.Abs((planetary.Total()+grResult.PerCentury)-ObservedPrecession))
 
-	// Generate visualizations
+	// Agreement assessment
+	theoryTotal := planetary.Total() + grResult.PerCentury
+	var simulationResult float64
+	if stats.CleanSamples > 0 {
+		simulationResult = stats.MeanRate
+	} else {
+		simulationResult = precessionPerCentury
+	}
+
+	difference := math.Abs(simulationResult - theoryTotal)
+	agreementPercent := (1.0 - difference/theoryTotal) * 100
+
+	fmt.Printf("🎯 Agreement analysis:\n")
+	fmt.Printf("  Simulation vs Theory: %.1f arcsec difference\n", difference)
+	fmt.Printf("  Agreement: %.1f%%\n", agreementPercent)
+
+	if agreementPercent > 95 {
+		fmt.Printf("  ✅ Excellent agreement with theoretical prediction!\n")
+	} else if agreementPercent > 85 {
+		fmt.Printf("  ✅ Good agreement with theory\n")
+	} else if agreementPercent > 70 {
+		fmt.Printf("  ⚠️  Fair agreement - consider longer simulation\n")
+	} else {
+		fmt.Printf("  ❌ Poor agreement - simulation may be too short or noisy\n")
+	}
+
+	// Generate enhanced visualizations
+	fmt.Println("\n=== Generating Visualizations ===")
 	GenerateOrbitVisualization(orbitPoints, "mercury_orbit.svg")
 	GeneratePrecessionPlot(timeHistory, precessionHistory, "precession_plot.svg")
 	GenerateRosettePattern(orbitPoints, "rosette_pattern.svg")
 
-	fmt.Println("\nVisualization files generated:")
-	fmt.Println("- mercury_orbit.svg: Mercury orbital path")
-	fmt.Println("- precession_plot.svg: Precession vs time")
-	fmt.Println("- rosette_pattern.svg: Orbital rosette pattern")
+	// Generate statistical plots if we have enough data
+	if stats.CleanSamples > 10 {
+		GenerateStatisticalAnalysisPlot(analyzer.Tracker, "statistical_analysis.svg")
+		fmt.Println("✅ statistical_analysis.svg: Statistical analysis plots")
+	}
+
+	fmt.Println("✅ mercury_orbit.svg: Enhanced orbital path visualization")
+	fmt.Println("✅ precession_plot.svg: Precession vs time analysis")
+	fmt.Println("✅ rosette_pattern.svg: Orbital rosette pattern")
+
+	// Recommendations for future runs
+	fmt.Println("\n=== Recommendations ===")
+	if analyzer.Tracker.GetOrbitalCount() < 50 {
+		fmt.Printf("📝 Run longer simulation (100+ years) for better statistics\n")
+	}
+	if !useAdaptive && durationYears > 10 {
+		fmt.Printf("📝 Try adaptive time stepping for improved accuracy\n")
+	}
+	if stats.CleanSamples > 0 && stats.Confidence/stats.MeanRate > 0.1 {
+		fmt.Printf("📝 Large confidence interval - consider longer simulation\n")
+	}
 }
 
 // Visualization Functions
@@ -1297,6 +1723,158 @@ func GenerateRosettePattern(orbitPoints []Vector3D, filename string) {
 	}
 }
 
+// GenerateStatisticalAnalysisPlot creates a comprehensive statistical analysis visualization
+func GenerateStatisticalAnalysisPlot(tracker *PrecessionTracker, filename string) {
+	if len(tracker.PeriapsisEvents) < 10 {
+		return
+	}
+
+	width, height := 1200.0, 800.0
+	margin := 80.0
+
+	// Calculate precession rates for plotting
+	var rates []float64
+	var times []float64
+	for i := 1; i < len(tracker.PeriapsisEvents); i++ {
+		prev := tracker.PeriapsisEvents[i-1]
+		curr := tracker.PeriapsisEvents[i]
+
+		dOmega := curr.ArgumentPeriapsis - prev.ArgumentPeriapsis
+		if dOmega > math.Pi {
+			dOmega -= 2 * math.Pi
+		}
+		if dOmega < -math.Pi {
+			dOmega += 2 * math.Pi
+		}
+
+		dt := curr.Time - prev.Time
+		dtYears := dt / (365.25 * 24 * 3600)
+
+		if dtYears > 0.001 {
+			rate := (dOmega * RadiansToArcseconds / dtYears) * 100 // arcsec/century
+			rates = append(rates, rate)
+			times = append(times, curr.Time/(365.25*24*3600)) // years
+		}
+	}
+
+	if len(rates) == 0 {
+		return
+	}
+
+	// Statistics
+	stats := tracker.AnalyzePrecessionStatistics()
+
+	// Find bounds
+	minRate, maxRate := rates[0], rates[0]
+	for _, r := range rates {
+		if r < minRate {
+			minRate = r
+		}
+		if r > maxRate {
+			maxRate = r
+		}
+	}
+	minTime, maxTime := times[0], times[len(times)-1]
+
+	// Add padding
+	rateRange := maxRate - minRate
+	if rateRange == 0 {
+		rateRange = 10
+	}
+	minRate -= rateRange * 0.1
+	maxRate += rateRange * 0.1
+
+	var svg strings.Builder
+	svg.WriteString(fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
+<svg width="%.0f" height="%.0f" xmlns="http://www.w3.org/2000/svg">
+<style>
+.data-point { fill: #3498db; opacity: 0.7; }
+.mean-line { stroke: #e74c3c; stroke-width: 2; stroke-dasharray: 5,5; }
+.confidence-band { fill: #e74c3c; opacity: 0.2; }
+.axis { stroke: #333; stroke-width: 1; }
+.grid { stroke: #eee; stroke-width: 0.5; }
+.text { font-family: Arial; font-size: 11px; fill: #333; }
+.title { font-family: Arial; font-size: 16px; font-weight: bold; fill: #333; }
+.legend { font-family: Arial; font-size: 10px; fill: #666; }
+</style>
+`, width, height))
+
+	plotWidth := width - 2*margin
+	plotHeight := height - 2*margin
+
+	// Convert coordinates
+	convertX := func(t float64) float64 { return margin + (t-minTime)/(maxTime-minTime)*plotWidth }
+	convertY := func(r float64) float64 { return margin + (maxRate-r)/(maxRate-minRate)*plotHeight }
+
+	// Draw axes
+	svg.WriteString(fmt.Sprintf(`<line x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f" class="axis"/>`, margin, margin+plotHeight, margin+plotWidth, margin+plotHeight))
+	svg.WriteString(fmt.Sprintf(`<line x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f" class="axis"/>`, margin, margin, margin, margin+plotHeight))
+
+	// Draw grid and labels
+	for i := 0; i <= 5; i++ {
+		// Time axis
+		x := margin + float64(i)*plotWidth/5
+		time := minTime + float64(i)*(maxTime-minTime)/5
+		svg.WriteString(fmt.Sprintf(`<line x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f" class="grid"/>`, x, margin, x, margin+plotHeight))
+		svg.WriteString(fmt.Sprintf(`<text x="%.1f" y="%.1f" class="text" text-anchor="middle">%.1f</text>`, x, margin+plotHeight+20, time))
+
+		// Rate axis
+		y := margin + float64(i)*plotHeight/5
+		rate := maxRate - float64(i)*(maxRate-minRate)/5
+		svg.WriteString(fmt.Sprintf(`<line x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f" class="grid"/>`, margin, y, margin+plotWidth, y))
+		svg.WriteString(fmt.Sprintf(`<text x="%.1f" y="%.1f" class="text" text-anchor="end">%.1f</text>`, margin-10, y+4, rate))
+	}
+
+	// Draw confidence band if we have statistics
+	if stats.CleanSamples > 0 {
+		upperBound := convertY(stats.MeanRate + stats.Confidence)
+		lowerBound := convertY(stats.MeanRate - stats.Confidence)
+		svg.WriteString(fmt.Sprintf(`<rect x="%.1f" y="%.1f" width="%.1f" height="%.1f" class="confidence-band"/>`,
+			margin, upperBound, plotWidth, lowerBound-upperBound))
+
+		// Mean line
+		meanY := convertY(stats.MeanRate)
+		svg.WriteString(fmt.Sprintf(`<line x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f" class="mean-line"/>`,
+			margin, meanY, margin+plotWidth, meanY))
+	}
+
+	// Draw data points
+	for i, rate := range rates {
+		x := convertX(times[i])
+		y := convertY(rate)
+		svg.WriteString(fmt.Sprintf(`<circle cx="%.1f" cy="%.1f" r="3" class="data-point"/>`, x, y))
+	}
+
+	// Title and labels
+	svg.WriteString(fmt.Sprintf(`<text x="%.1f" y="30" class="title" text-anchor="middle">Statistical Analysis of Precession Rate</text>`, width/2))
+	svg.WriteString(fmt.Sprintf(`<text x="%.1f" y="%.1f" class="text" text-anchor="middle">Time (years)</text>`, width/2, height-10))
+
+	// Rotated Y label
+	svg.WriteString(`<g transform="translate(20,` + fmt.Sprintf("%.1f", height/2) + `) rotate(-90)">`)
+	svg.WriteString(`<text class="text" text-anchor="middle">Precession Rate (arcsec/century)</text>`)
+	svg.WriteString(`</g>`)
+
+	// Legend
+	legendY := margin + 20
+	if stats.CleanSamples > 0 {
+		svg.WriteString(fmt.Sprintf(`<text x="%.1f" y="%.1f" class="legend">Mean: %.2f ± %.2f arcsec/century</text>`,
+			margin+plotWidth-200, legendY, stats.MeanRate, stats.Confidence))
+		svg.WriteString(fmt.Sprintf(`<text x="%.1f" y="%.1f" class="legend">Clean samples: %d</text>`,
+			margin+plotWidth-200, legendY+15, stats.CleanSamples))
+		svg.WriteString(fmt.Sprintf(`<text x="%.1f" y="%.1f" class="legend">Quality: %s</text>`,
+			margin+plotWidth-200, legendY+30, stats.DataQuality))
+	}
+
+	svg.WriteString("</svg>")
+
+	// Write to file
+	content := svg.String()
+	err := WriteFile(filename, content)
+	if err != nil {
+		fmt.Printf("Error writing %s: %v\n", filename, err)
+	}
+}
+
 // WriteFile is a simple file writer for our SVG content
 func WriteFile(filename, content string) error {
 	file, err := os.Create(filename)
@@ -1409,15 +1987,35 @@ func main() {
 	fmt.Println("1. Analytical calculation (Phase 1)")
 	fmt.Println("2. N-body simulation (Phase 2)")
 	fmt.Println("3. Data sources demo (JPL Horizons, VSOP87)")
-	fmt.Print("Choose option (1, 2, or 3): ")
+	fmt.Println("4. Parallel planetary influence analysis")
+	fmt.Print("Choose option (1, 2, 3, or 4): ")
 
 	var choice int
 	fmt.Scanf("%d", &choice)
 
-	if choice == 3 {
+	if choice == 4 {
+		// Phase 4: Parallel planetary influence analysis
+		fmt.Print("Enter analysis duration in years (recommended: 50-200): ")
+		var durationYears float64
+		fmt.Scanf("%f", &durationYears)
+
+		// Validate input
+		if durationYears <= 0 || durationYears > 500 {
+			fmt.Printf("Invalid duration. Using 100 years instead.\n")
+			durationYears = 100
+		}
+
+		// Ask about adaptive time stepping
+		fmt.Print("Use adaptive time stepping for higher accuracy? (y/n): ")
+		var adaptiveChoice string
+		fmt.Scanf("%s", &adaptiveChoice)
+		useAdaptive := strings.ToLower(adaptiveChoice) == "y" || strings.ToLower(adaptiveChoice) == "yes"
+
+		RunParallelAnalysis(durationYears, useAdaptive)
+	} else if choice == 3 {
 		DemoDataSources()
 	} else if choice == 2 {
-		// Phase 2: N-body simulation
+		// Phase 2: Enhanced N-body simulation
 		fmt.Print("Enter simulation duration in years (recommended: 10-100): ")
 		var durationYears float64
 		fmt.Scanf("%f", &durationYears)
@@ -1428,12 +2026,13 @@ func main() {
 			durationYears = 10
 		}
 
-		outputInterval := 100 // Output every 100 time steps
-		if durationYears > 50 {
-			outputInterval = 500 // Less frequent output for longer simulations
-		}
+		// Ask about adaptive time stepping
+		fmt.Print("Use adaptive time stepping for higher accuracy? (y/n): ")
+		var adaptiveChoice string
+		fmt.Scanf("%s", &adaptiveChoice)
+		useAdaptive := strings.ToLower(adaptiveChoice) == "y" || strings.ToLower(adaptiveChoice) == "yes"
 
-		RunNBodySimulation(durationYears, outputInterval)
+		RunNBodySimulation(durationYears, useAdaptive)
 	} else {
 		// Phase 1: Analytical calculation
 		fmt.Println("\n=== Analytical Mercury Perihelion Precession Calculation ===")
@@ -1687,4 +2286,82 @@ func DemoDataSources() {
 	fmt.Println("- Network access for JPL Horizons API")
 	fmt.Println("- Complete VSOP87 coefficient files")
 	fmt.Println("- DE440 ephemeris files for highest accuracy")
+}
+
+// RunParallelAnalysis выполняет параллельный анализ планетарных вкладов
+func RunParallelAnalysis(durationYears float64, useAdaptive bool) {
+	fmt.Println("\n=== Parallel Planetary Influence Analysis ===")
+	fmt.Printf("🎯 Target: Decompose individual planetary contributions\n")
+	fmt.Printf("⏱️  Duration: %.1f years per scenario\n", durationYears)
+	fmt.Printf("🔧 Adaptive stepping: %t\n", useAdaptive)
+	fmt.Println()
+
+	// Создаем анализатор
+	analyzer := NewPlanetaryInfluenceAnalyzer(durationYears, useAdaptive)
+
+	// Настраиваем callback для прогресса
+	analyzer.SetProgressCallback(func(message string, progress float64) {
+		fmt.Printf("📈 Progress: %.1f%% - %s\n", progress, message)
+	})
+
+	// Запускаем анализ
+	ctx := context.Background()
+	startTime := time.Now()
+
+	summary, err := analyzer.AnalyzeIndividualContributions(ctx)
+	if err != nil {
+		fmt.Printf("❌ Analysis failed: %v\n", err)
+		return
+	}
+
+	// Выводим детализированные результаты
+	analyzer.PrintDetailedResults(summary)
+
+	// Генерируем визуализацию
+	fmt.Println("\n📊 Generating contribution analysis chart...")
+	if err := analyzer.GenerateContributionsChart(summary, "planetary_contributions.svg"); err != nil {
+		fmt.Printf("⚠️  Failed to generate chart: %v\n", err)
+	} else {
+		fmt.Println("✅ planetary_contributions.svg: Detailed contribution analysis")
+	}
+
+	// Сводная информация
+	fmt.Printf("\n🎉 Analysis completed in %v\n", time.Since(startTime).Round(time.Second))
+	fmt.Printf("📁 Results saved to planetary_contributions.svg\n")
+
+	// Ключевые выводы
+	fmt.Println("\n💡 KEY INSIGHTS:")
+
+	// Найти самый большой вклад
+	var maxPlanet string
+	var maxContribution float64
+	for planet, contribution := range summary.IndividualContributions {
+		if math.Abs(contribution) > math.Abs(maxContribution) {
+			maxPlanet = planet
+			maxContribution = contribution
+		}
+	}
+
+	if maxPlanet != "" {
+		fmt.Printf("🥇 Largest individual contribution: %s (%.1f arcsec/century)\n", maxPlanet, maxContribution)
+	}
+
+	// Сравнение с теорией
+	theoretical := CalculatePlanetaryPerturbations()
+	if venusContrib, exists := summary.IndividualContributions["Venus"]; exists {
+		agreement := 100 * (1 - math.Abs(venusContrib-theoretical.Venus)/theoretical.Venus)
+		fmt.Printf("🎯 Venus agreement with theory: %.1f%%\n", agreement)
+	}
+
+	// Полная система vs сумма компонентов
+	if fullSystem, exists := summary.CombinedEffects["Full System"]; exists {
+		var sumIndividual float64
+		for _, contribution := range summary.IndividualContributions {
+			sumIndividual += contribution
+		}
+		nonlinearity := math.Abs(fullSystem - sumIndividual)
+		fmt.Printf("🔄 Non-linear interactions: %.1f arcsec/century\n", nonlinearity)
+	}
+
+	fmt.Println("\n🚀 Tip: Run the web interface (./run-web.sh) for interactive analysis!")
 }

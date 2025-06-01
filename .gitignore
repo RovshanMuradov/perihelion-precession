@@ -1,3 +1,56 @@
-README.md
-CLAUDE.md
+# Binaries
+perihelion
+perihelion.exe
+*.exe
+*.out
+
+# Generated visualization files
+*.svg
+*.png
+*.jpg
+*.gif
+
+# Test coverage
+*.cover
+coverage.out
+
+# Temporary files
+*.tmp
+*.temp
+
+# Go workspace file
+go.work
+go.work.sum
+
+# IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Log files
+*.log
+
+# Environment variables
+.env
+.env.local
+
+# Build artifacts
+dist/
+build/
+
+# Documentation build
+docs/_build/
+
+# Claude Code files
 .claude
