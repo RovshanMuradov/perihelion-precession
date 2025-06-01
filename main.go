@@ -563,6 +563,8 @@ type PrecessionTracker struct {
 	TotalPrecession   float64          // Total accumulated precession (radians)
 	PrecessionHistory []float64        // History of perihelion longitudes for visualization
 	TimeHistory       []float64        // Corresponding time points for visualization
+	lastOmega         float64          // ω on previous pericentre (unwrapped)
+	cumOmega          float64          // accumulated "unwrapped" angle
 }
 
 // NewPrecessionTracker creates a new precession tracker.
@@ -577,6 +579,8 @@ func NewPrecessionTracker(initialLongitude float64) *PrecessionTracker {
 		TotalPrecession:   0.0,
 		PrecessionHistory: []float64{initialLongitude},
 		TimeHistory:       []float64{0.0},
+		lastOmega:         0.0,
+		cumOmega:          0.0,
 	}
 }
 
@@ -664,63 +668,46 @@ func (pt *PrecessionTracker) detectPeriapsis(time float64, position Vector3D, ve
 	
 	// Add to history
 	pt.PeriapsisEvents = append(pt.PeriapsisEvents, event)
-	pt.CurrentOrbit++
 	
 	// Debug output for first few periapsis events (optional)
-	if len(pt.PeriapsisEvents) <= 3 {
-		fmt.Printf("Detected periapsis %d at day %.1f, ω=%.3f°\n",
-			pt.CurrentOrbit-1, time/(24*3600), argumentPeriapsis*180/math.Pi)
+	if len(pt.PeriapsisEvents) <= 10 {
+		fmt.Printf("Detected periapsis %d at day %.1f, ω=%.6f rad (%.3f°), cumOmega=%.6f rad\n",
+			pt.CurrentOrbit, time/(24*3600), argumentPeriapsis, argumentPeriapsis*180/math.Pi, pt.cumOmega)
 	}
 	
-	// Calculate precession if we have multiple periapsis passages
-	if len(pt.PeriapsisEvents) >= 2 {
-		pt.calculatePrecession()
-	}
+	// Update precession using cumulative tracking approach
+	pt.addPeriapsis(argumentPeriapsis)
 }
 
-// calculatePrecession computes the total precession from periapsis advancement.
-func (pt *PrecessionTracker) calculatePrecession() {
-	if len(pt.PeriapsisEvents) < 2 {
-		return
-	}
-
-	// Simple approach: just track the change from first to last periapsis
-	// Apply heavy smoothing since we're looking for very small effects
-
-	firstEvent := pt.PeriapsisEvents[0]
-	lastEvent := pt.PeriapsisEvents[len(pt.PeriapsisEvents)-1]
-
-	// Calculate raw angular change
-	angularChange := lastEvent.ArgumentPeriapsis - firstEvent.ArgumentPeriapsis
-
-	// Handle angle wrapping more carefully
-	for angularChange > math.Pi {
-		angularChange -= 2 * math.Pi
-	}
-	for angularChange < -math.Pi {
-		angularChange += 2 * math.Pi
-	}
-
-	// The expected theoretical precession per orbit from N-body effects (classical only)
-	// should be around 531.4 arcsec/century / 415 orbits/century = 1.28 arcsec/orbit
-	// But we're only simulating a short time, so the signal is very noisy
-
-	orbitsSpanned := lastEvent.OrbitNumber - firstEvent.OrbitNumber
-	if orbitsSpanned > 0 {
-		// Average precession per orbit
-		precessionPerOrbit := angularChange / float64(orbitsSpanned)
+// addPeriapsis updates precession tracking for each new periapsis event
+func (pt *PrecessionTracker) addPeriapsis(eventOmega float64) {
+	if pt.CurrentOrbit == 0 { // First periapsis
+		pt.lastOmega = eventOmega
+	} else {
+		dOmega := eventOmega - pt.lastOmega
+		originalDOmega := dOmega // Store original for debug
 		
-		// No arbitrary scaling - use the actual measured precession
-		// With proper orbital elements and periapsis detection, noise should be minimal
-		pt.TotalPrecession = precessionPerOrbit * float64(pt.CurrentOrbit)
-
-		// Optional debug output
-		if len(pt.PeriapsisEvents) <= 2 {
-			fmt.Printf("Precession tracking: %.2f arcsec over %d orbits\n",
-				angularChange*RadiansToArcseconds, orbitsSpanned)
+		// Unwrap angle change at transition, not over entire interval
+		if dOmega > math.Pi {
+			dOmega -= 2 * math.Pi
 		}
+		if dOmega < -math.Pi {
+			dOmega += 2 * math.Pi
+		}
+
+		// Debug output for first few transitions
+		if pt.CurrentOrbit <= 10 {
+			fmt.Printf("  Orbit %d: dOmega=%.6f rad (original=%.6f), cumOmega before=%.6f\n", 
+				pt.CurrentOrbit, dOmega, originalDOmega, pt.cumOmega)
+		}
+
+		pt.cumOmega += dOmega                // Sum the increment
+		pt.TotalPrecession = pt.cumOmega     // Store in radians
+		pt.lastOmega = eventOmega
 	}
+	pt.CurrentOrbit++
 }
+
 
 // GetPrecessionRate calculates the precession rate in arcseconds per year.
 func (pt *PrecessionTracker) GetPrecessionRate(timeSpanSeconds float64) float64 {
@@ -728,19 +715,16 @@ func (pt *PrecessionTracker) GetPrecessionRate(timeSpanSeconds float64) float64 
 		return 0
 	}
 
-	// Calculate precession rate based on actual periapsis measurements
-	firstEvent := pt.PeriapsisEvents[0]
-	lastEvent := pt.PeriapsisEvents[len(pt.PeriapsisEvents)-1]
-
-	actualTimeSpan := lastEvent.Time - firstEvent.Time
-	if actualTimeSpan == 0 {
-		return 0
-	}
-
-	// Convert from radians/second to arcseconds/year
-	radiansPerSecond := pt.TotalPrecession / actualTimeSpan
+	// TotalPrecession now contains cumulative precession in radians over the simulation
+	// Convert to arcseconds per year
 	secondsPerYear := 365.25 * 24 * 3600
-	return radiansPerSecond * secondsPerYear * RadiansToArcseconds
+	durationYears := timeSpanSeconds / secondsPerYear
+	
+	// Total precession in arcseconds over the simulation duration
+	totalPrecessionArcsec := pt.TotalPrecession * RadiansToArcseconds
+	
+	// Return as arcseconds per year
+	return totalPrecessionArcsec / durationYears
 }
 
 // GetOrbitalCount returns the number of completed orbits based on periapsis detections.
