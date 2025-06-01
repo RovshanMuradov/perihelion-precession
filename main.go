@@ -80,6 +80,101 @@ func (v Vector3D) Unit() Vector3D {
 	return v.Scale(1.0 / mag)
 }
 
+// Dot returns the dot product of two vectors.
+func (v Vector3D) Dot(other Vector3D) float64 {
+	return v.X*other.X + v.Y*other.Y + v.Z*other.Z
+}
+
+// Cross returns the cross product of two vectors.
+func (v Vector3D) Cross(other Vector3D) Vector3D {
+	return Vector3D{
+		X: v.Y*other.Z - v.Z*other.Y,
+		Y: v.Z*other.X - v.X*other.Z,
+		Z: v.X*other.Y - v.Y*other.X,
+	}
+}
+
+// Orbital Mechanics Functions
+
+// SolveKeplerEquation solves Kepler's equation M = E - e*sin(E) for eccentric anomaly E.
+// Uses Newton-Raphson iteration for improved accuracy.
+func SolveKeplerEquation(meanAnomaly, eccentricity float64) float64 {
+	// Initial guess for eccentric anomaly
+	E := meanAnomaly
+	if eccentricity > 0.8 {
+		E = math.Pi
+	}
+	
+	// Newton-Raphson iteration
+	for i := 0; i < 30; i++ {
+		f := E - eccentricity*math.Sin(E) - meanAnomaly
+		df := 1.0 - eccentricity*math.Cos(E)
+		
+		deltaE := f / df
+		E -= deltaE
+		
+		// Check for convergence
+		if math.Abs(deltaE) < 1e-15 {
+			break
+		}
+	}
+	
+	return E
+}
+
+// KeplerToCartesian converts Keplerian orbital elements to Cartesian state vectors.
+// Returns position and velocity vectors in the reference frame.
+func KeplerToCartesian(elements OrbitalElements, centralMass float64) (Vector3D, Vector3D) {
+	a := elements.SemiMajorAxis
+	e := elements.Eccentricity
+	i := elements.Inclination
+	Omega := elements.LongitudeOfNode
+	omega := elements.ArgumentOfPeriapsis
+	M := elements.MeanAnomaly
+	
+	// Gravitational parameter
+	mu := GravitationalConstant * centralMass
+	
+	// Solve Kepler's equation for eccentric anomaly
+	E := SolveKeplerEquation(M, e)
+	
+	// True anomaly
+	nu := 2.0 * math.Atan2(math.Sqrt(1+e)*math.Sin(E/2), math.Sqrt(1-e)*math.Cos(E/2))
+	
+	// Distance
+	r := a * (1 - e*math.Cos(E))
+	
+	// Position and velocity in orbital plane
+	xOrb := r * math.Cos(nu)
+	yOrb := r * math.Sin(nu)
+	
+	// Specific angular momentum
+	h := math.Sqrt(mu * a * (1 - e*e))
+	
+	// Velocity in orbital plane
+	vxOrb := -mu/h * math.Sin(nu)
+	vyOrb := mu/h * (e + math.Cos(nu))
+	
+	// Rotation matrices for 3D transformation
+	cosOmega := math.Cos(Omega)
+	sinOmega := math.Sin(Omega)
+	cosomega := math.Cos(omega)
+	sinomega := math.Sin(omega)
+	cosi := math.Cos(i)
+	sini := math.Sin(i)
+	
+	// Transform to 3D inertial frame
+	x := xOrb*(cosOmega*cosomega - sinOmega*sinomega*cosi) - yOrb*(cosOmega*sinomega + sinOmega*cosomega*cosi)
+	y := xOrb*(sinOmega*cosomega + cosOmega*sinomega*cosi) - yOrb*(sinOmega*sinomega - cosOmega*cosomega*cosi)
+	z := xOrb*sinomega*sini + yOrb*cosomega*sini
+	
+	vx := vxOrb*(cosOmega*cosomega - sinOmega*sinomega*cosi) - vyOrb*(cosOmega*sinomega + sinOmega*cosomega*cosi)
+	vy := vxOrb*(sinOmega*cosomega + cosOmega*sinomega*cosi) - vyOrb*(sinOmega*sinomega - cosOmega*cosomega*cosi)
+	vz := vxOrb*sinomega*sini + vyOrb*cosomega*sini
+	
+	return Vector3D{x, y, z}, Vector3D{vx, vy, vz}
+}
+
 // OrbitalElements represents Keplerian orbital elements.
 type OrbitalElements struct {
 	SemiMajorAxis       float64 // a - Semi-major axis (m)
@@ -114,6 +209,43 @@ type SystemState struct {
 }
 
 // Physics Engine Implementation
+
+// CalculatePostNewtonianCorrection computes the 1PN (first post-Newtonian) relativistic correction
+// to the gravitational acceleration. This produces the General Relativity precession effect.
+func CalculatePostNewtonianCorrection(planet Planet, centralMass float64) Vector3D {
+	r := planet.Position
+	v := planet.Velocity
+	rMag := r.Magnitude()
+	vMag := v.Magnitude()
+	
+	if rMag == 0 {
+		return Vector3D{0, 0, 0}
+	}
+	
+	// Gravitational parameter μ = GM
+	mu := GravitationalConstant * centralMass
+	
+	// Unit position vector r̂
+	rHat := r.Unit()
+	
+	// Radial velocity vr = v·r̂
+	vr := v.Dot(rHat)
+	
+	// 1PN acceleration terms:
+	// a_GR = [(4μ/r - v²)μ/(c²r²)] * r̂ + [4μvr/(c²r²)] * v
+	
+	c2 := float64(SpeedOfLight * SpeedOfLight)
+	
+	// First term: radial correction
+	radialTerm := (4*mu/rMag - vMag*vMag) * mu / (c2 * rMag * rMag)
+	radialAccel := rHat.Scale(radialTerm)
+	
+	// Second term: tangential correction  
+	tangentialTerm := 4 * mu * vr / (c2 * rMag * rMag)
+	tangentialAccel := v.Scale(tangentialTerm)
+	
+	return radialAccel.Add(tangentialAccel)
+}
 
 // CalculateGravitationalForce computes the gravitational force between two planets.
 // Returns the force vector acting on planet1 due to planet2.
@@ -161,6 +293,14 @@ func ComputeDerivative(planetIndex int, planets []Planet) StateDerivative {
 	planet := planets[planetIndex]
 	netForce := CalculateNetForce(planetIndex, planets)
 	acceleration := netForce.Scale(1.0 / planet.Mass) // F = ma, so a = F/m
+	
+	// Add post-Newtonian (1PN) relativistic corrections for planets orbiting the Sun
+	// Assume Sun is at index 0 and is stationary at origin
+	if planetIndex > 0 && len(planets) > 0 {
+		// Calculate 1PN correction relative to the Sun
+		pnCorrection := CalculatePostNewtonianCorrection(planet, planets[0].Mass)
+		acceleration = acceleration.Add(pnCorrection)
+	}
 
 	return StateDerivative{
 		PositionDerivative: planet.Velocity,
@@ -235,60 +375,166 @@ func IntegrateRK4(state SystemState, dt float64) SystemState {
 	return newState
 }
 
+// IntegrateVelocityVerlet performs one step of Velocity Verlet (symplectic) integration.
+// This integrator conserves energy better for long-term orbital simulations.
+func IntegrateVelocityVerlet(state SystemState, dt float64) SystemState {
+	n := len(state.Planets)
+	
+	// Create new state
+	newState := SystemState{
+		Time:    state.Time + dt,
+		Planets: make([]Planet, n),
+	}
+	
+	// Calculate current accelerations
+	currentAccelerations := make([]Vector3D, n)
+	for i := range state.Planets {
+		netForce := CalculateNetForce(i, state.Planets)
+		currentAccelerations[i] = netForce.Scale(1.0 / state.Planets[i].Mass)
+	}
+	
+	// Velocity Verlet algorithm:
+	// 1. Update positions: r(t+dt) = r(t) + v(t)*dt + 0.5*a(t)*dt²
+	// 2. Calculate new accelerations at r(t+dt)
+	// 3. Update velocities: v(t+dt) = v(t) + 0.5*(a(t) + a(t+dt))*dt
+	
+	// Step 1: Update positions
+	for i := range state.Planets {
+		newState.Planets[i] = state.Planets[i]
+		newState.Planets[i].Position = state.Planets[i].Position.
+			Add(state.Planets[i].Velocity.Scale(dt)).
+			Add(currentAccelerations[i].Scale(0.5 * dt * dt))
+	}
+	
+	// Step 2: Calculate new accelerations at updated positions
+	newAccelerations := make([]Vector3D, n)
+	for i := range newState.Planets {
+		netForce := CalculateNetForce(i, newState.Planets)
+		newAccelerations[i] = netForce.Scale(1.0 / newState.Planets[i].Mass)
+	}
+	
+	// Step 3: Update velocities using average of old and new accelerations
+	for i := range state.Planets {
+		averageAcceleration := currentAccelerations[i].Add(newAccelerations[i]).Scale(0.5)
+		newState.Planets[i].Velocity = state.Planets[i].Velocity.Add(averageAcceleration.Scale(dt))
+	}
+	
+	return newState
+}
+
 // Precession Analysis Functions
 
 // ConvertStateToOrbitalElements converts Cartesian state (position, velocity) to Keplerian orbital elements.
-// Improved version with proper argument of periapsis calculation for precession tracking.
+// Uses proper eccentricity vector calculation for accurate orbital parameter determination.
 func ConvertStateToOrbitalElements(planet Planet, centralMass float64) OrbitalElements {
-	r := planet.Position.Magnitude()
-	v := planet.Velocity.Magnitude()
-
-	// Specific orbital energy
-	specificEnergy := 0.5*v*v - GravitationalConstant*centralMass/r
-
-	// Semi-major axis from energy: E = -GM/(2a)
-	semiMajorAxis := -GravitationalConstant * centralMass / (2 * specificEnergy)
-
-	// Angular momentum vector
-	// Angular momentum vector (not needed for 2D case but keeping for completeness)
-	// angularMomentum := Vector3D{
-	//	X: planet.Position.Y*planet.Velocity.Z - planet.Position.Z*planet.Velocity.Y,
-	//	Y: planet.Position.Z*planet.Velocity.X - planet.Position.X*planet.Velocity.Z,
-	//	Z: planet.Position.X*planet.Velocity.Y - planet.Position.Y*planet.Velocity.X,
-	// }
-
-	// Simplified eccentricity calculation from energy and angular momentum
-	// Angular momentum for 2D case (z component only)
-	h := planet.Position.X*planet.Velocity.Y - planet.Position.Y*planet.Velocity.X
-
-	// Eccentricity from energy and angular momentum
+	r := planet.Position
+	v := planet.Velocity
+	rMag := r.Magnitude()
+	vMag := v.Magnitude()
+	
+	// Gravitational parameter
 	mu := GravitationalConstant * centralMass
-	eccentricity := math.Sqrt(1 + 2*specificEnergy*h*h/(mu*mu))
-
-	// For simplified precession tracking, we'll use a different approach
-	// The key is to track slow changes in orbital orientation
-
-	// Current orbital angle
-	currentAngle := math.Atan2(planet.Position.Y, planet.Position.X)
-	if currentAngle < 0 {
-		currentAngle += 2 * math.Pi
+	
+	// Specific orbital energy
+	specificEnergy := 0.5*vMag*vMag - mu/rMag
+	
+	// Semi-major axis from energy: E = -μ/(2a)
+	semiMajorAxis := -mu / (2 * specificEnergy)
+	
+	// Angular momentum vector h = r × v
+	hVec := r.Cross(v)
+	h := hVec.Magnitude()
+	
+	// Eccentricity vector (Laplace-Runge-Lenz vector)
+	// e_vec = (v × h)/μ - r/|r|
+	vCrossH := v.Cross(hVec)
+	rUnit := r.Unit()
+	eVec := vCrossH.Scale(1.0/mu).Subtract(rUnit)
+	eccentricity := eVec.Magnitude()
+	
+	// Node vector (for inclination calculations)
+	// n = k × h (where k is the z-axis unit vector)
+	kVec := Vector3D{0, 0, 1}
+	nVec := kVec.Cross(hVec)
+	nMag := nVec.Magnitude()
+	
+	// Inclination: i = arccos(h_z / |h|)
+	inclination := math.Acos(hVec.Z / h)
+	
+	// Longitude of ascending node: Ω = arctan2(n_y, n_x)
+	var longitudeOfNode float64
+	if nMag > 1e-10 {
+		longitudeOfNode = math.Atan2(nVec.Y, nVec.X)
+	} else {
+		longitudeOfNode = 0.0 // Undefined for non-inclined orbits
 	}
-
-	// For argument of periapsis, we need to track the slow precession
-	// This is a simplified approximation - real implementation would need
-	// more sophisticated orbital element tracking
-	argumentOfPeriapsis := currentAngle
-
-	// True anomaly (simplified)
-	trueAnomaly := 0.0 // Simplified for this demonstration
-
+	
+	// Argument of periapsis: ω = arccos(n·e / (|n||e|))
+	var argumentOfPeriapsis float64
+	if eccentricity > 1e-10 && nMag > 1e-10 {
+		cosω := nVec.Dot(eVec) / (nMag * eccentricity)
+		// Clamp to valid range to avoid numerical errors
+		if cosω > 1.0 {
+			cosω = 1.0
+		} else if cosω < -1.0 {
+			cosω = -1.0
+		}
+		argumentOfPeriapsis = math.Acos(cosω)
+		
+		// Check quadrant
+		if eVec.Z < 0 {
+			argumentOfPeriapsis = 2*math.Pi - argumentOfPeriapsis
+		}
+	} else if eccentricity > 1e-10 {
+		// For non-inclined orbits, measure from x-axis
+		argumentOfPeriapsis = math.Atan2(eVec.Y, eVec.X)
+	} else {
+		argumentOfPeriapsis = 0.0 // Undefined for circular orbits
+	}
+	
+	// True anomaly: ν = arccos(e·r / (|e||r|))
+	var trueAnomaly float64
+	if eccentricity > 1e-10 {
+		cosν := eVec.Dot(r) / (eccentricity * rMag)
+		// Clamp to valid range
+		if cosν > 1.0 {
+			cosν = 1.0
+		} else if cosν < -1.0 {
+			cosν = -1.0
+		}
+		trueAnomaly = math.Acos(cosν)
+		
+		// Check quadrant using velocity direction
+		if r.Dot(v) < 0 {
+			trueAnomaly = 2*math.Pi - trueAnomaly
+		}
+	} else {
+		// For circular orbits, use position angle
+		trueAnomaly = math.Atan2(r.Y, r.X)
+	}
+	
+	// Convert true anomaly to mean anomaly (simplified for demonstration)
+	// For more accuracy, would need to convert through eccentric anomaly
+	meanAnomaly := trueAnomaly // Approximation for low eccentricity
+	
+	// Ensure angles are in [0, 2π] range
+	if longitudeOfNode < 0 {
+		longitudeOfNode += 2 * math.Pi
+	}
+	if argumentOfPeriapsis < 0 {
+		argumentOfPeriapsis += 2 * math.Pi
+	}
+	if meanAnomaly < 0 {
+		meanAnomaly += 2 * math.Pi
+	}
+	
 	return OrbitalElements{
 		SemiMajorAxis:       semiMajorAxis,
 		Eccentricity:        eccentricity,
-		Inclination:         0.0, // Coplanar assumption
-		LongitudeOfNode:     0.0, // Coplanar assumption
+		Inclination:         inclination,
+		LongitudeOfNode:     longitudeOfNode,
 		ArgumentOfPeriapsis: argumentOfPeriapsis,
-		MeanAnomaly:         trueAnomaly, // Approximation for low eccentricity
+		MeanAnomaly:         meanAnomaly,
 	}
 }
 
@@ -309,9 +555,10 @@ type PeriapsisEvent struct {
 // PrecessionTracker tracks perihelion precession over time using periapsis detection.
 type PrecessionTracker struct {
 	PeriapsisEvents   []PeriapsisEvent // History of detected periapsis passages
-	LastDistance      float64          // Previous distance for periapsis detection
 	LastPosition      Vector3D         // Previous position for periapsis detection
-	IsApproaching     bool             // Whether Mercury is approaching the Sun
+	LastVelocity      Vector3D         // Previous velocity for periapsis detection
+	LastTime          float64          // Previous time for interpolation
+	LastRadialVel     float64          // Previous radial velocity (r·v/|r|)
 	CurrentOrbit      int              // Current orbit number
 	TotalPrecession   float64          // Total accumulated precession (radians)
 	PrecessionHistory []float64        // History of perihelion longitudes for visualization
@@ -322,9 +569,10 @@ type PrecessionTracker struct {
 func NewPrecessionTracker(initialLongitude float64) *PrecessionTracker {
 	return &PrecessionTracker{
 		PeriapsisEvents:   []PeriapsisEvent{},
-		LastDistance:      0.0,
 		LastPosition:      Vector3D{},
-		IsApproaching:     true,
+		LastVelocity:      Vector3D{},
+		LastTime:          0.0,
+		LastRadialVel:     0.0,
 		CurrentOrbit:      0,
 		TotalPrecession:   0.0,
 		PrecessionHistory: []float64{initialLongitude},
@@ -332,28 +580,34 @@ func NewPrecessionTracker(initialLongitude float64) *PrecessionTracker {
 	}
 }
 
-// Update detects periapsis passages and tracks precession through orbital orientation changes.
+// Update detects periapsis passages and tracks precession using proper r·v sign change detection.
 func (pt *PrecessionTracker) Update(time float64, position Vector3D, velocity Vector3D) {
-	// Calculate current distance to Sun (at origin)
-	currentDistance := position.Magnitude()
-
-	// Detect periapsis passage (closest approach to Sun)
-	if pt.LastDistance > 0 {
-		// Check if we've passed periapsis (distance was decreasing, now increasing)
-		if pt.IsApproaching && currentDistance > pt.LastDistance {
-			// We just passed periapsis - record this event
-			pt.detectPeriapsis(time, pt.LastDistance, pt.LastPosition, velocity)
-			pt.IsApproaching = false
-		} else if !pt.IsApproaching && currentDistance < pt.LastDistance {
-			// Started approaching again - new orbit beginning
-			pt.IsApproaching = true
-		}
+	// Calculate radial velocity: r·v / |r|
+	rMag := position.Magnitude()
+	if rMag == 0 {
+		return // Avoid division by zero
 	}
-
+	
+	currentRadialVel := position.Dot(velocity) / rMag
+	
+	// Detect periapsis passage using radial velocity sign change
+	// Periapsis occurs when radial velocity changes from negative (approaching) to positive (receding)
+	if pt.LastTime > 0 && pt.LastRadialVel < 0 && currentRadialVel > 0 {
+		// Interpolate to find exact periapsis time and position
+		periapsisTime, periapsisPos, periapsisVel := pt.interpolatePeriapsis(
+			pt.LastTime, time, pt.LastPosition, position, pt.LastVelocity, velocity,
+			pt.LastRadialVel, currentRadialVel)
+		
+		// Record periapsis event
+		pt.detectPeriapsis(periapsisTime, periapsisPos, periapsisVel)
+	}
+	
 	// Update tracking variables
-	pt.LastDistance = currentDistance
 	pt.LastPosition = position
-
+	pt.LastVelocity = velocity
+	pt.LastTime = time
+	pt.LastRadialVel = currentRadialVel
+	
 	// Update visualization data (for continuity with existing plots)
 	elements := ConvertStateToOrbitalElements(Planet{Position: position, Velocity: velocity}, SolarMass)
 	longitude := CalculatePerihelionLongitude(elements)
@@ -361,18 +615,45 @@ func (pt *PrecessionTracker) Update(time float64, position Vector3D, velocity Ve
 	pt.TimeHistory = append(pt.TimeHistory, time/(365.25*24*3600))
 }
 
-// detectPeriapsis records a periapsis passage and calculates precession.
-func (pt *PrecessionTracker) detectPeriapsis(time float64, distance float64, position Vector3D, velocity Vector3D) {
-	// Use a more direct approach: track the angle of the position vector at periapsis
-	// This gives us the orientation of the orbital ellipse's major axis
-	// The precession is the slow change in this orientation over time
-
-	// Calculate the angle of periapsis (direction from Sun to Mercury at closest approach)
-	argumentPeriapsis := math.Atan2(position.Y, position.X)
-	if argumentPeriapsis < 0 {
-		argumentPeriapsis += 2 * math.Pi
+// interpolatePeriapsis performs linear interpolation to find the exact periapsis moment.
+// Uses the fact that radial velocity is zero at periapsis.
+func (pt *PrecessionTracker) interpolatePeriapsis(t1, t2 float64, r1, r2, v1, v2 Vector3D, rv1, rv2 float64) (float64, Vector3D, Vector3D) {
+	// Linear interpolation to find when radial velocity = 0
+	// rv(t) = rv1 + (rv2 - rv1) * (t - t1) / (t2 - t1) = 0
+	// Solving: t = t1 - rv1 * (t2 - t1) / (rv2 - rv1)
+	
+	var alpha float64
+	if math.Abs(rv2 - rv1) < 1e-15 {
+		// Avoid division by zero, use midpoint
+		alpha = 0.5
+	} else {
+		alpha = -rv1 / (rv2 - rv1)
 	}
+	
+	// Clamp alpha to [0, 1] to stay within the interval
+	if alpha < 0 {
+		alpha = 0
+	} else if alpha > 1 {
+		alpha = 1
+	}
+	
+	// Interpolate time, position, and velocity
+	periapsisTime := t1 + alpha*(t2-t1)
+	periapsisPos := r1.Add(r2.Subtract(r1).Scale(alpha))
+	periapsisVel := v1.Add(v2.Subtract(v1).Scale(alpha))
+	
+	return periapsisTime, periapsisPos, periapsisVel
+}
 
+// detectPeriapsis records a periapsis passage and calculates precession.
+func (pt *PrecessionTracker) detectPeriapsis(time float64, position Vector3D, velocity Vector3D) {
+	// Calculate distance at periapsis
+	distance := position.Magnitude()
+	
+	// Use orbital elements to get proper argument of periapsis
+	elements := ConvertStateToOrbitalElements(Planet{Position: position, Velocity: velocity}, SolarMass)
+	argumentPeriapsis := elements.ArgumentOfPeriapsis
+	
 	// Create periapsis event
 	event := PeriapsisEvent{
 		Time:              time,
@@ -380,17 +661,17 @@ func (pt *PrecessionTracker) detectPeriapsis(time float64, distance float64, pos
 		ArgumentPeriapsis: argumentPeriapsis,
 		OrbitNumber:       pt.CurrentOrbit,
 	}
-
+	
 	// Add to history
 	pt.PeriapsisEvents = append(pt.PeriapsisEvents, event)
 	pt.CurrentOrbit++
-
+	
 	// Debug output for first few periapsis events (optional)
 	if len(pt.PeriapsisEvents) <= 3 {
-		fmt.Printf("Detected periapsis %d at day %.1f\n",
-			pt.CurrentOrbit-1, time/(24*3600))
+		fmt.Printf("Detected periapsis %d at day %.1f, ω=%.3f°\n",
+			pt.CurrentOrbit-1, time/(24*3600), argumentPeriapsis*180/math.Pi)
 	}
-
+	
 	// Calculate precession if we have multiple periapsis passages
 	if len(pt.PeriapsisEvents) >= 2 {
 		pt.calculatePrecession()
@@ -428,14 +709,9 @@ func (pt *PrecessionTracker) calculatePrecession() {
 	if orbitsSpanned > 0 {
 		// Average precession per orbit
 		precessionPerOrbit := angularChange / float64(orbitsSpanned)
-
-		// Scale down dramatically to account for noise - this is still experimental
-		// Real Mercury precession is ~0.1 arcsec/orbit from GR + ~1.3 arcsec/orbit from classical
-		if math.Abs(precessionPerOrbit*RadiansToArcseconds) > 10 {
-			// Probably just noise, scale it down
-			precessionPerOrbit *= 0.01
-		}
-
+		
+		// No arbitrary scaling - use the actual measured precession
+		// With proper orbital elements and periapsis detection, noise should be minimal
 		pt.TotalPrecession = precessionPerOrbit * float64(pt.CurrentOrbit)
 
 		// Optional debug output
@@ -591,6 +867,7 @@ func GetPlanetaryData() map[string]PlanetaryData {
 }
 
 // InitializePlanet creates a Planet with initial position and velocity from orbital elements
+// Using proper Kepler-to-Cartesian conversion for accurate initial conditions.
 func InitializePlanet(data PlanetaryData, meanAnomaly float64) Planet {
 	if data.Name == "Sun" {
 		return Planet{
@@ -602,31 +879,25 @@ func InitializePlanet(data PlanetaryData, meanAnomaly float64) Planet {
 		}
 	}
 
-	// Simplified circular orbit initialization for demonstration
-	// In reality, would need to solve Kepler's equation for eccentric orbits
-	angle := meanAnomaly
+	// Create orbital elements structure
+	elements := OrbitalElements{
+		SemiMajorAxis:       data.SemiMajorAxis,
+		Eccentricity:        data.Eccentricity,
+		Inclination:         0, // Simplified coplanar for now
+		LongitudeOfNode:     0,
+		ArgumentOfPeriapsis: 0,
+		MeanAnomaly:         meanAnomaly,
+	}
 
-	// Position in orbital plane (simplified circular approximation)
-	x := data.SemiMajorAxis * math.Cos(angle)
-	y := data.SemiMajorAxis * math.Sin(angle) * math.Sqrt(1-data.Eccentricity*data.Eccentricity)
-
-	// Velocity perpendicular to position (simplified)
-	vx := -data.MeanOrbitalVelocity * math.Sin(angle)
-	vy := data.MeanOrbitalVelocity * math.Cos(angle) * math.Sqrt(1-data.Eccentricity*data.Eccentricity)
+	// Use proper Kepler-to-Cartesian conversion
+	position, velocity := KeplerToCartesian(elements, SolarMass)
 
 	return Planet{
 		Name:     data.Name,
 		Mass:     data.Mass,
-		Position: Vector3D{x, y, 0}, // z=0 for coplanar orbits
-		Velocity: Vector3D{vx, vy, 0},
-		Elements: OrbitalElements{
-			SemiMajorAxis:       data.SemiMajorAxis,
-			Eccentricity:        data.Eccentricity,
-			Inclination:         0, // Simplified coplanar
-			LongitudeOfNode:     0,
-			ArgumentOfPeriapsis: 0,
-			MeanAnomaly:         meanAnomaly,
-		},
+		Position: position,
+		Velocity: velocity,
+		Elements: elements,
 	}
 }
 
@@ -681,8 +952,8 @@ func RunNBodySimulation(durationYears float64, outputInterval int) {
 
 	// Run simulation
 	for step := 0; step < totalSteps; step++ {
-		// Integrate one step
-		state = IntegrateRK4(state, timeStep)
+		// Integrate one step using symplectic integrator for better long-term stability
+		state = IntegrateVelocityVerlet(state, timeStep)
 
 		// Track precession
 		analyzer.AnalyzeSystem(state)
